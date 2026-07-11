@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package ros2embedded.v1;
+
+message BridgeConfig {
+  string connection_id = 1;
+  uint32 domain_id = 2;
+  Protocol protocol = 3;
+  repeated TopicBinding bindings = 4;
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_SERIAL = 1;
+  PROTOCOL_REDIS = 2;
+  PROTOCOL_MQTT = 3;
+}
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DEVICE_TO_ROS = 1;
+  ROS_TO_DEVICE = 2;
+  BIDIRECTIONAL = 3;
+}
+
+enum ValueType {
+  VALUE_TYPE_UNSPECIFIED = 0;
+  BOOL = 1;
+  INT32 = 2;
+  UINT32 = 3;
+  INT64 = 4;
+  UINT64 = 5;
+  FLOAT32 = 6;
+  FLOAT64 = 7;
+  STRING = 8;
+  BYTES = 9;
+}
+
+message TopicBinding {
+  string identifier = 1;
+  string ros_topic = 2;
+  Direction direction = 3;
+  ValueType value_type = 4;
+  string ros_message_type = 5;
+}

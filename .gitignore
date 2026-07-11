@@ -1,0 +1,102 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and reports
+*.log
+logs/
+coverage/
+.coverage
+htmlcov/
+test-results/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+dist/
+build/
+*.egg-info/
+
+# C and C++
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.pdb
+*.dSYM/
+compile_commands.json
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+
+# ROS 2 / colcon
+install/
+log/
+build/
+.colcon/
+.ros/
+rosbag2_*/
+*.db3
+
+# Protobuf and generated code
+*_pb2.py
+*_pb2.pyi
+*_pb2_grpc.py
+*.pb.cc
+*.pb.h
+*.pb.go
+*.pb.rs
+
+# Embedded / Arduino / PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.platformio/
+firmware/.pio/
+*.elf
+*.hex
+*.bin
+*.uf2
+
+# Package manager caches
+.cache/
+node_modules/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

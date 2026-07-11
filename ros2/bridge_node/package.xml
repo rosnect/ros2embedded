@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>bridge_node</name>
+  <version>0.1.0</version>
+  <description>ROS 2 node that bridges one external connection into the ROS graph.</description>
+  <maintainer email="maintainer@example.com">ros2embedded maintainers</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>connection_handlers</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,20 @@
+<library path="connection_handlers">
+  <class
+    name="connection_handlers/SerialConnectionHandler"
+    type="ros2_embedded::SerialConnectionHandler"
+    base_class_type="ros2_embedded::ConnectionHandler">
+    <description>Serial transport handler.</description>
+  </class>
+  <class
+    name="connection_handlers/MqttConnectionHandler"
+    type="ros2_embedded::MqttConnectionHandler"
+    base_class_type="ros2_embedded::ConnectionHandler">
+    <description>MQTT transport handler.</description>
+  </class>
+  <class
+    name="connection_handlers/RedisConnectionHandler"
+    type="ros2_embedded::RedisConnectionHandler"
+    base_class_type="ros2_embedded::ConnectionHandler">
+    <description>Redis transport handler.</description>
+  </class>
+</library>
