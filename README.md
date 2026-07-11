@@ -12,6 +12,7 @@ ros2/connection_handlers C++ pluginlib transport handler package
 ros2/bridge_node         C++ bridge node package
 ros2/bridge_manager      Python manager package
 embedded/arduino         Arduino ESP32/ESP8266 client library
+clients/flutter_bridge_client Flutter Android/iOS client library scaffold
 docs/architecture.md     Reference architecture
 ```
 
@@ -72,5 +73,6 @@ This is the first implementation scaffold:
 - Bridge node loads handlers by protocol and enforces bridge `domain_id`.
 - Manager node can auto-start one bridge process and publish status.
 - Arduino library exposes `writeData`, `writeBytes`, and `readData` with domain validation.
+- Flutter client scaffold supports Android/iOS connection setup, editable phone sensor identifiers, and subscriptions.
 
 Next work should replace the placeholder transport internals with real serial framing, MQTT client integration, Redis pub/sub integration, and generated protobuf serialization.

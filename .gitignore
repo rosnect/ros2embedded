@@ -92,6 +92,12 @@ firmware/.pio/
 *.bin
 *.uf2
 
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+clients/flutter_bridge_client/pubspec.lock
+
 # Package manager caches
 .cache/
 node_modules/

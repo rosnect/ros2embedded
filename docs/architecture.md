@@ -31,6 +31,12 @@ Embedded Client Library
   +-- write_data(identifier, value)
   +-- read_data(identifier)
   +-- protocol-specific handler implementation
+
+Flutter Client Library
+  |
+  +-- connect with MQTT/WebSocket/Redis style transports
+  +-- publish phone sensor data with editable identifiers
+  +-- subscribe to bridge identifiers and display incoming values
 ```
 
 ## Monorepo Layout
@@ -140,6 +146,32 @@ The embedded library should:
 - Keep configuration values visible and strongly typed.
 - Avoid hidden defaults that can cause hard-to-debug transport mismatches.
 - Support ESP32 and ESP8266 first.
+
+### Flutter Client Library
+
+The Flutter client should allow Android and iOS devices to join the same bridge model without speaking ROS 2 DDS directly.
+
+The app flow should be:
+
+- Select connection method: MQTT first, WebSocket next, Redis for lab/local setups.
+- Enter host, port, connection id, and bridge `domain_id`.
+- Connect only when the client and bridge node share the same `domain_id`.
+- Show available phone sensors and let the user enable them.
+- Let users edit sensor identifiers before publishing data.
+- Provide a subscription page where users enter identifiers and view incoming values.
+
+Useful phone data sources:
+
+- Accelerometer
+- Gyroscope
+- Magnetometer
+- GPS/location
+- Ambient light
+- Barometer
+- Camera frames or metadata
+- Microphone level/features
+- Battery state
+- Touch or joystick-style controls
 
 ## First Implementation Milestones
 
