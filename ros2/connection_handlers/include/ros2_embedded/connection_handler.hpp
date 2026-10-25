@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ros2_embedded/payload.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -16,13 +18,7 @@ struct ConnectionParams
   std::map<std::string, std::string> values;
 };
 
-struct TransportPayload
-{
-  std::string identifier;
-  std::uint32_t domain_id{0};
-  std::vector<std::uint8_t> data;
-};
-
+using ConfigurationCallback = std::function<void(const std::string &)>;
 using ReceiveCallback = std::function<void(const TransportPayload &)>;
 
 class ConnectionHandler
@@ -37,6 +33,12 @@ public:
   virtual bool send(const TransportPayload & payload) = 0;
   virtual void poll() = 0;
   virtual void set_receive_callback(ReceiveCallback callback) = 0;
+
+  // Optional transport control channel. Codecs/ROS binding policy stay in the node.
+  virtual bool supports_device_configuration() const {return false;}
+  virtual void set_configuration_callback(ConfigurationCallback callback) {(void)callback;}
+  virtual bool send_configuration_status(const std::string & json) {(void)json; return false;}
+  virtual bool request_configuration() {return false;}
 };
 
 }  // namespace ros2_embedded

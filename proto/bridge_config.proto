@@ -7,6 +7,10 @@ message BridgeConfig {
   uint32 domain_id = 2;
   Protocol protocol = 3;
   repeated TopicBinding bindings = 4;
+  // Device snapshots use a new opaque ID for each interface change; retries reuse it.
+  string configuration_id = 5;
+  // Device configuration requires version 1. Legacy host files may omit it.
+  uint32 schema_version = 6;
 }
 
 enum Protocol {
@@ -34,6 +38,7 @@ enum ValueType {
   FLOAT64 = 7;
   STRING = 8;
   BYTES = 9;
+  JSON = 10;
 }
 
 message TopicBinding {
@@ -42,4 +47,30 @@ message TopicBinding {
   Direction direction = 3;
   ValueType value_type = 4;
   string ros_message_type = 5;
+  // Required for BIDIRECTIONAL; use a distinct topic to avoid ROS feedback.
+  string ros_command_topic = 6;
+}
+
+// Control responses are protobuf JSON on MQTT, even when configs are binary.
+message BridgeConfigStatus {
+  string connection_id = 1;
+  uint32 domain_id = 2;
+  string configuration_id = 3;
+  string active_configuration_id = 4;
+  bool accepted = 5;
+  string error = 6;
+  string state = 7;
+  uint32 bindings_count = 8;
+  string payload_encoding = 9;
+  repeated TopicBinding bindings = 10;
+  uint32 schema_version = 11;
+  string ros_namespace = 12;
+}
+
+message BridgeConfigRequest {
+  string connection_id = 1;
+  uint32 domain_id = 2;
+  uint32 schema_version = 3;
+  string config_encoding = 4;
+  string payload_encoding = 5;
 }

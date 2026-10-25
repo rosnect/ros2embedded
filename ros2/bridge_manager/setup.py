@@ -12,6 +12,7 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
+    tests_require=["pytest"],
     maintainer="ros2embedded maintainers",
     maintainer_email="maintainer@example.com",
     description="Manager node for launching and tracking ROS2 embedded bridge nodes.",

@@ -7,13 +7,15 @@ namespace ros2_embedded
 
 bool RedisConnectionHandler::connect()
 {
-  connected_ = true;
-  return connected_;
+  // Never report a usable transport until Redis I/O is implemented.
+  connected_ = false;
+  return false;
 }
 
 bool RedisConnectionHandler::send(const TransportPayload & payload)
 {
-  return connected_ && validate_domain(payload);
+  (void)payload;
+  return false;
 }
 
 void RedisConnectionHandler::poll()

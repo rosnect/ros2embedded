@@ -6,9 +6,13 @@ enum class BridgeValueType : uint8_t {
   Bool = 1,
   Int32 = 2,
   UInt32 = 3,
+  Int64 = 4,
+  UInt64 = 5,
   Float32 = 6,
+  Float64 = 7,
   String = 8,
   Bytes = 9,
+  Json = 10,
 };
 
 struct BridgePayload {
@@ -40,7 +44,14 @@ public:
 
 private:
   HardwareSerial & serial_;
+  bool parseFrame(BridgePayload & payload);
   uint32_t domain_id_{0};
+  bool started_{false};
+  bool discard_{false};
+  size_t frame_size_{0};
+  char frame_[640];
+  char identifier_[97];
+  uint8_t data_[257];
 };
 
 class Ros2EmbeddedBridge {
@@ -54,10 +65,15 @@ public:
   bool writeData(const char * identifier, bool value);
   bool writeData(const char * identifier, int32_t value);
   bool writeData(const char * identifier, uint32_t value);
+  bool writeData(const char * identifier, int64_t value);
+  bool writeData(const char * identifier, uint64_t value);
   bool writeData(const char * identifier, float value);
+  bool writeData(const char * identifier, double value);
   bool writeData(const char * identifier, const char * value);
   bool writeBytes(const char * identifier, const uint8_t * data, size_t size);
 
+  // Returned identifier/data belong to the handler and remain valid until
+  // the next readData() or begin(). Copy them if they must be retained.
   bool readData(BridgePayload & payload);
 
 private:

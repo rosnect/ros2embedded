@@ -16,5 +16,7 @@ message BridgePayload {
     double float64_value = 16;
     string string_value = 17;
     bytes bytes_value = 18;
+    // UTF-8 JSON text for structured clients such as phone sensors.
+    string json_value = 19;
   }
 }

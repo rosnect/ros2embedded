@@ -5,6 +5,7 @@ namespace ros2_embedded
 
 void BasicConnectionHandler::configure(const ConnectionParams & params)
 {
+  disconnect();
   params_ = params;
 }
 

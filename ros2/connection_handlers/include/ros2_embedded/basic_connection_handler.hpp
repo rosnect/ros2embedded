@@ -2,7 +2,7 @@
 
 #include "ros2_embedded/connection_handler.hpp"
 
-#include <rclcpp/rclcpp.hpp>
+#include <atomic>
 
 namespace ros2_embedded
 {
@@ -19,7 +19,7 @@ protected:
   bool validate_domain(const TransportPayload & payload) const;
 
   ConnectionParams params_;
-  bool connected_{false};
+  std::atomic<bool> connected_{false};
   ReceiveCallback receive_callback_;
 };
 

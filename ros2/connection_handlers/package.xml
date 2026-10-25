@@ -10,6 +10,12 @@
 
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
+  <build_depend>pkg-config</build_depend>
+  <depend>protobuf-dev</depend>
+  <depend>nlohmann-json-dev</depend>
+  <depend>mosquitto-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

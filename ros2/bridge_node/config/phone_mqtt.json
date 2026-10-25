@@ -1,0 +1,10 @@
+{
+  "connection_id": "phone_1",
+  "domain_id": 7,
+  "protocol": "PROTOCOL_MQTT",
+  "bindings": [
+    {"identifier": "phone.accelerometer", "ros_topic": "accelerometer", "direction": "DEVICE_TO_ROS", "value_type": "JSON"},
+    {"identifier": "phone.test", "ros_topic": "test", "direction": "DEVICE_TO_ROS", "value_type": "JSON"},
+    {"identifier": "robot.status", "ros_topic": "robot_status", "direction": "ROS_TO_DEVICE", "value_type": "STRING"}
+  ]
+}

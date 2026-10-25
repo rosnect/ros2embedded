@@ -1,193 +1,44 @@
-# ROS2 Embedded Bridge Architecture
+# ROS 2 Embedded Bridge Architecture
 
 ## Goal
 
-Build a communication-agnostic bridge between embedded hardware and the ROS 2 ecosystem. Devices can connect over serial, Redis, MQTT, or future transports while ROS 2 nodes see normal publishers, subscribers, services, and actions.
+Connect embedded hardware and other clients to ROS 2 through configurable interfaces, keeping transport choice independent from device platform and ROS topic wiring. ROS 2 Humble is the host target; Arduino ESP32/ESP8266 and the separately maintained Rosnect Flutter app are initial clients.
 
-The first target devices are Arduino-style ESP32 and ESP8266 boards, but the architecture should also support non-embedded producers later.
-
-## High-Level Shape
+## Components
 
 ```text
 Manager
-  |
-  +-- launches/configures bridge node for connection A
-  +-- launches/configures bridge node for connection B
-  +-- tracks lifecycle, status, restart policy, and discovery
-
-Bridge Node
-  |
-  +-- ConnectionHandler interface
-  |     +-- SerialConnectionHandler
-  |     +-- RedisConnectionHandler
-  |     +-- MqttConnectionHandler
-  |
-  +-- receives protobuf interface description
-  +-- creates ROS 2 publishers/subscribers dynamically
-  +-- translates device messages <-> ROS 2 messages
-
-Embedded Client Library
-  |
-  +-- write_data(identifier, value)
-  +-- read_data(identifier)
-  +-- protocol-specific handler implementation
-
-Flutter Client Library
-  |
-  +-- connect with MQTT/WebSocket/Redis style transports
-  +-- publish phone sensor data with editable identifiers
-  +-- subscribe to bridge identifiers and display incoming values
+  └── Bridge node for each connection
+        ├── Validated BridgeConfig
+        ├── Typed ROS publishers/subscribers
+        └── ConnectionHandler plugin
+              ├── MQTT + JSON or protobuf
+              ├── Serial + bounded line framing
+              └── Redis (reserved; explicitly unavailable)
 ```
 
-## Monorepo Layout
+The manager owns child processes and their parameter files. It starts the installed bridge executable directly, tracks running/exited state, supports stop/restart through its Python API, and terminates/reaps children at shutdown. Automatic process restart policies, remote management services, and manager discovery of new connection IDs remain future work.
 
-Proposed package layout:
+Each bridge obtains a protobuf `BridgeConfig` (JSON or binary) from its device over a transport control channel, or from an explicit host file. It validates all bindings, creates the configured ROS interfaces, and runs one transport plugin. MQTT device mode accepts complete interface snapshots, stages replacements, commits them on the ROS executor, and acknowledges results; invalid updates preserve the active interfaces. Retained snapshots allow bootstrap after a bridge restart. The config identity must match its node parameters. ROS topics are scoped per domain/connection unless explicitly absolute. Bidirectional identifiers use distinct ROS output and command topics to prevent feedback. Standard scalar, string, byte-array, and structured JSON payloads are supported initially; services, actions, and arbitrary ROS message layouts remain extension work.
 
-```text
-ros2embedded/
-  docs/
-    architecture.md
-  proto/
-    bridge_config.proto
-    bridge_payload.proto
-  ros2/
-    bridge_manager/
-    bridge_node/
-    connection_handlers/
-  embedded/
-    arduino/
-      src/
-      examples/
-  tools/
-```
+The `ConnectionHandler` interface retains `configure`, `connect`, `disconnect`, `is_connected`, `send`, `poll`, and receive callbacks. An optional configuration callback/request/status interface lets transports deliver descriptions without moving ROS binding policy into the transport. Serial retains file configuration for now. Its data messages are common typed `TransportPayload` objects, independent of wire representation. `connect()` means transport startup was accepted; MQTT becomes connected after CONNACK and SUBACK. `send()` accepts a message for transport, not an application-level delivery acknowledgement.
 
-## Core Concepts
+Codecs own wire encoding and strict type/range validation. JSON preserves compatibility with the existing Flutter MQTT contract; protobuf implements the versioned binary payload schema; serial framing preserves the Arduino protocol while implementing both directions. A new device can use any implemented transport/codec combination without changing ROS routing. Domain guards apply both at the transport boundary and before ROS publication.
 
-### Manager Level
+MQTT uses a network worker and bounded queues. Receive callbacks are drained by `poll()` on the ROS executor so I/O callbacks never publish through an expired node. Serial uses nonblocking Linux I/O, bounded frame/output buffers, and bounded work each tick. Transport destruction closes resources; MQTT destruction stops/joins its worker before unloading the plugin library.
 
-The manager owns process and lifecycle control. It should:
+## Contracts and configuration
 
-- Accept connection requests with protocol-specific parameters.
-- Launch a bridge node with those parameters.
-- Track active bridge nodes by connection id, protocol, health, and lifecycle state.
-- Stop, restart, and reconfigure bridge nodes.
-- Expose status over ROS 2 services/actions or a management topic.
+- `proto/bridge_config.proto`: connection identity, protocol, identifiers, ROS bindings, types, directions.
+- `proto/bridge_payload.proto`: typed values and optional Unix timestamp (zero means unknown).
+- `ros2/connection_handlers/include/ros2_embedded/payload.hpp`: transport-independent host representation and codec API.
+- [Device configuration / Flutter handoff](device_configuration.md): configuration topics, handshake, snapshots, and client changes.
+- [Communication contract](communication.md): supported mappings, wire formats, limits, and extension rules.
 
-Example connection request:
+The bridge `domain_id` is separate from DDS `ROS_DOMAIN_ID`. It prevents accidental cross-domain acceptance but is not authentication. Broker credentials/TLS are transport settings and remain outside device binding configuration.
 
-```yaml
-connection_id: motor_controller_left
-protocol: serial
-params:
-  port: /dev/ttyUSB0
-  baudrate: 115200
-config_source:
-  type: device_bootstrap
-```
+## Validation
 
-### Bridge Node
+Codec tests cover scalar boundaries, malformed envelopes, all supported value types, and JSON/protobuf/serial round trips. The actual Arduino library source is built with a host serial stub and checked against host codecs. PTY tests exercise Linux serial framing and disconnects. Manager tests cover process cleanup and replacement. The integration scripts run temporary MQTT brokers, multiple ROS bridges, JSON and protobuf devices, and a serial device; they verify traffic isolation, both directions, broker restart, device configuration bootstrap, live interface replacement/removal, rejection, idempotent retries, and retained-config recovery.
 
-Each bridge node handles one external connection. It receives a protobuf configuration that describes:
-
-- External identifiers used by the hardware or external system.
-- ROS 2 topics to publish.
-- ROS 2 topics to subscribe to.
-- Message encoding and value type.
-- Direction: device-to-ROS, ROS-to-device, or bidirectional.
-
-The bridge node should dynamically create ROS 2 publishers and subscribers from this configuration. That keeps the transport protocol independent from ROS 2 graph wiring.
-
-### ConnectionHandler Interface
-
-The bridge node should depend on a stable transport interface instead of protocol-specific code.
-
-Expected responsibilities:
-
-- `connect(params)`
-- `disconnect()`
-- `is_connected()`
-- `send(identifier, payload)`
-- `poll()` or async receive callback
-- `set_receive_callback(callback)`
-
-Initial implementations:
-
-- `SerialConnectionHandler`
-- `RedisConnectionHandler`
-- `MqttConnectionHandler`
-
-For efficiency and clean extensibility, protocol handlers can be built as shared libraries/plugins. In C++ ROS 2 this likely maps well to `pluginlib`, where each handler is compiled as a `.so` and loaded by protocol name.
-
-### Protobuf Contracts
-
-Use protobuf for two layers:
-
-- Bridge configuration: declares identifiers, ROS topics, directions, and value types.
-- Runtime payloads: carries identifier, timestamp, type information, and encoded value.
-- Every config and payload includes a bridge `domain_id`. The bridge node and device client must agree on it before traffic is accepted.
-
-The bridge configuration should be validated before any publishers/subscribers are created. Invalid identifiers, unsupported types, missing topics, or protocol mismatch should fail early.
-
-### Embedded Client Library
-
-The embedded side should feel like a small Blynk-style API:
-
-```cpp
-bridge.write_data("imu.accel_x", accel_x);
-bridge.write_data("motor.left.rpm", rpm);
-
-auto target = bridge.read_data<float>("motor.left.target_rpm");
-```
-
-The embedded library should:
-
-- Expose connection-agnostic read/write APIs.
-- Use explicit protocol handlers for serial, Redis, and MQTT where supported.
-- Keep configuration values visible and strongly typed.
-- Avoid hidden defaults that can cause hard-to-debug transport mismatches.
-- Support ESP32 and ESP8266 first.
-
-### Flutter Client Library
-
-The Flutter client should allow Android and iOS devices to join the same bridge model without speaking ROS 2 DDS directly.
-
-The app flow should be:
-
-- Select connection method: MQTT first, WebSocket next, Redis for lab/local setups.
-- Enter host, port, connection id, and bridge `domain_id`.
-- Connect only when the client and bridge node share the same `domain_id`.
-- Show available phone sensors and let the user enable them.
-- Let users edit sensor identifiers before publishing data.
-- Provide a subscription page where users enter identifiers and view incoming values.
-
-Useful phone data sources:
-
-- Accelerometer
-- Gyroscope
-- Magnetometer
-- GPS/location
-- Ambient light
-- Barometer
-- Camera frames or metadata
-- Microphone level/features
-- Battery state
-- Touch or joystick-style controls
-
-## First Implementation Milestones
-
-1. Define protobuf schemas for bridge configuration and runtime payloads.
-2. Create the C++ `ConnectionHandler` interface.
-3. Implement serial, Redis, and MQTT handler skeletons.
-4. Build a ROS 2 bridge node that loads one handler and creates publishers/subscribers from config.
-5. Build a manager node that launches and tracks bridge nodes.
-6. Add an Arduino client library with serial first, then MQTT and Redis as optional transports.
-7. Add examples for ESP32 sensor publishing and ROS 2 command subscription.
-
-## Design Notes
-
-- Prefer one bridge node per physical or logical connection.
-- Prefer handler plugins for protocol-specific performance and dependency isolation.
-- Keep protobuf schemas stable and versioned.
-- Treat identifiers as the cross-transport device API.
-- Keep ROS 2 topic names configurable, not hard-coded into firmware.
-- Validate bridge configs before starting runtime IO.
+Physical device checks and running the actual Flutter app are separate validation steps. This repository does not modify the sibling Flutter project.

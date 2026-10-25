@@ -1,0 +1,9 @@
+{
+  "connection_id": "esp32_lab_1",
+  "domain_id": 7,
+  "protocol": "PROTOCOL_SERIAL",
+  "bindings": [
+    {"identifier": "sensor.temperature_c", "ros_topic": "temperature", "direction": "DEVICE_TO_ROS", "value_type": "FLOAT32"},
+    {"identifier": "motor.target", "ros_topic": "motor_target", "direction": "ROS_TO_DEVICE", "value_type": "INT32"}
+  ]
+}
