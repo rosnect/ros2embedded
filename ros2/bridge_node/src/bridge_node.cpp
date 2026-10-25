@@ -1,4 +1,5 @@
 #include "ros2_embedded/connection_handler.hpp"
+#include "ros2_embedded/sensor_conversion.hpp"
 #include "bridge_config.pb.h"
 #include <google/protobuf/util/json_util.h>
 #include <pluginlib/class_loader.hpp>
@@ -149,7 +150,9 @@ public:
         return;
       }
       try {ros2_embedded::validate_payload(p); route->second.publish(p);}
-      catch (const std::exception & e) {RCLCPP_WARN(get_logger(), "Dropping invalid payload: %s", e.what());}
+      catch (const std::exception & e) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Dropping invalid payload: %s", e.what());
+      }
     });
     if (!handler_->connect()) {throw std::runtime_error("Transport failed to open; check its configuration");}
     poll_timer_ = create_wall_timer(std::chrono::milliseconds(5), [this]() {handler_->poll();});
@@ -219,16 +222,21 @@ private:
         throw std::invalid_argument("Invalid or duplicate identifier");
       }
       const auto expected_type = ros_type(static_cast<ValueType>(binding.value_type()));
-      if (!binding.ros_message_type().empty() && binding.ros_message_type() != expected_type) {
-        throw std::invalid_argument("ros_message_type does not match value_type for " + binding.identifier());
+      if (ros2_embedded::supported_sensor_type(binding.ros_message_type())) {
+        if (binding.value_type() != ros2embedded::v1::JSON) {
+          throw std::invalid_argument("Native sensor ros_message_type requires value_type=JSON for " + binding.identifier());
+        }
+      } else {
+        if (!binding.ros_message_type().empty() && binding.ros_message_type() != expected_type) {
+          throw std::invalid_argument("Unsupported ros_message_type or value_type mismatch for " + binding.identifier());
+        }
+        binding.set_ros_message_type(expected_type);
       }
-      binding.set_ros_message_type(expected_type);
       const auto direction = binding.direction();
       if (direction != ros2embedded::v1::DEVICE_TO_ROS && direction != ros2embedded::v1::ROS_TO_DEVICE &&
         direction != ros2embedded::v1::BIDIRECTIONAL) {throw std::invalid_argument("Invalid binding direction");}
       if (device_configuration_) {
-        // Escaping is identical to connection IDs, including dots/slashes in identifiers.
-        // A slash is first encoded as its ASCII escape; underscores are escaped by the helper.
+        // Injective ASCII escaping also handles punctuation in device identifiers.
         std::string token = "id_";
         const char * hex = "0123456789abcdef";
         for (unsigned char c : binding.identifier()) {
@@ -314,12 +322,20 @@ private:
       }
     }
     // Ensure even normalized configs have a bounded acknowledgement (with error headroom).
-    if (make_status(config.configuration_id(), true, "", &config).size() > ros2_embedded::kMaxWireBytes - 2048) {
+    if (make_status(config.configuration_id(), true, "", &config).size() > ros2_embedded::kMaxConfigBytes - 2048) {
       throw std::invalid_argument("Normalized configuration/status is too large");
     }
     auto candidate = std::make_shared<Interfaces>();
     const auto next_generation = generation_ + 1;
     for (const auto & binding : config.bindings()) {
+      const auto & ros_message = binding.ros_message_type();
+      if (ros_message == "sensor_msgs/msg/Imu") {add_sensor_binding<sensor_msgs::msg::Imu>(binding, *candidate, next_generation); continue;}
+      if (ros_message == "sensor_msgs/msg/MagneticField") {add_sensor_binding<sensor_msgs::msg::MagneticField>(binding, *candidate, next_generation); continue;}
+      if (ros_message == "sensor_msgs/msg/NavSatFix") {add_sensor_binding<sensor_msgs::msg::NavSatFix>(binding, *candidate, next_generation); continue;}
+      if (ros_message == "sensor_msgs/msg/Illuminance") {add_sensor_binding<sensor_msgs::msg::Illuminance>(binding, *candidate, next_generation); continue;}
+      if (ros_message == "sensor_msgs/msg/FluidPressure") {add_sensor_binding<sensor_msgs::msg::FluidPressure>(binding, *candidate, next_generation); continue;}
+      if (ros_message == "sensor_msgs/msg/BatteryState") {add_sensor_binding<sensor_msgs::msg::BatteryState>(binding, *candidate, next_generation); continue;}
+      if (ros_message == "sensor_msgs/msg/CompressedImage") {add_sensor_binding<sensor_msgs::msg::CompressedImage>(binding, *candidate, next_generation); continue;}
       switch (static_cast<ValueType>(binding.value_type())) {
         case ValueType::Bool: add_binding<std_msgs::msg::Bool>(binding, *candidate, next_generation); break;
         case ValueType::Int32: add_binding<std_msgs::msg::Int32>(binding, *candidate, next_generation); break;
@@ -341,6 +357,38 @@ private:
     interfaces_.swap(candidate);
     interfaces_ready_ = true;
     RCLCPP_INFO(get_logger(), "Applied %d bindings for configuration_id=%s", active_config_.bindings_size(), active_config_.configuration_id().c_str());
+  }
+  template<typename Message>
+  void add_sensor_binding(const TopicBinding & binding, Interfaces & interfaces, std::uint64_t generation)
+  {
+    constexpr std::size_t depth = std::is_same_v<Message, sensor_msgs::msg::CompressedImage> ? 1 : 5;
+    if (binding.direction() != ros2embedded::v1::ROS_TO_DEVICE) {
+      auto publisher = create_publisher<Message>(topic_name(binding.ros_topic()), rclcpp::QoS(depth).reliable());
+      interfaces.routes.emplace(binding.identifier(), Route{ValueType::Json, [publisher](const TransportPayload & p) {
+        publisher->publish(ros2_embedded::sensor_from_payload<Message>(p));
+      }});
+    }
+    if (binding.direction() != ros2embedded::v1::DEVICE_TO_ROS) {
+      const auto topic = binding.direction() == ros2embedded::v1::BIDIRECTIONAL ? binding.ros_command_topic() : binding.ros_topic();
+      // Best-effort sensor subscriptions match both best-effort and reliable ROS producers.
+      interfaces.subscriptions.push_back(create_subscription<Message>(topic_name(topic), rclcpp::SensorDataQoS().keep_last(depth),
+        [this, identifier = binding.identifier(), generation](const typename Message::SharedPtr message) {
+          if (generation != generation_) {return;}
+          try {
+            TransportPayload p;
+            p.identifier = identifier; p.domain_id = domain_id_; p.type = ValueType::Json;
+            p.value = ros2_embedded::sensor_to_json(*message);
+            if (message->header.stamp.sec >= 0) {
+              p.timestamp_unix_ns = std::uint64_t(message->header.stamp.sec) * 1000000000ULL + message->header.stamp.nanosec;
+            }
+            if (!handler_->send(p)) {
+              RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Native sensor send rejected: disconnected or queue full");
+            }
+          } catch (const std::exception & e) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Invalid outgoing sensor message: %s", e.what());
+          }
+        }));
+    }
   }
   template<typename Message>
   void add_binding(const TopicBinding & binding, Interfaces & interfaces, std::uint64_t generation)

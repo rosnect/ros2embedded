@@ -5,6 +5,9 @@
 #include <deque>
 #include <mutex>
 #include <set>
+#include <map>
+#include <chrono>
+#include <type_traits>
 #include <stdexcept>
 #include <cstdlib>
 #include <regex>
@@ -34,10 +37,24 @@ struct MqttConnectionHandler::Impl
   bool loop_started{false};
   std::mutex mutex;
   struct Configuration {std::string wire;};
-  std::deque<std::variant<TransportPayload, Configuration>> received;
+  using Event = std::variant<TransportPayload, Configuration>;
+  std::deque<Event> received;
+  std::size_t received_bytes{0};
+  std::size_t pending_bytes{0};
+  std::size_t dropped{0};
+  std::chrono::steady_clock::time_point last_drop_report{};
+  static std::size_t bytes(const Event & event) {
+    if (auto config = std::get_if<Configuration>(&event)) {return config->wire.size();}
+    const auto & payload = std::get<TransportPayload>(event);
+    return payload.identifier.size() + sizeof(TransportPayload) + std::visit([](const auto & value) -> std::size_t {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, Bytes>) {return value.size();}
+      else {return sizeof(T);}
+    }, payload.value);
+  }
   bool device_configuration{false};
   bool request_pending{false};
-  std::set<int> pending;
+  std::map<int, std::size_t> pending;
   std::string input_topic;
   std::string output_topic;
   std::string encoding;
@@ -142,31 +159,40 @@ bool MqttConnectionHandler::connect()
       auto self = static_cast<MqttConnectionHandler *>(context);
       self->connected_ = false;
       std::lock_guard<std::mutex> lock(self->impl_->mutex);
-      self->impl_->received.clear();
+      self->impl_->received.clear(); self->impl_->received_bytes = 0;
       self->impl_->request_pending = false;
       if (rc != 0) {RCLCPP_WARN(logger, "MQTT disconnected; reconnecting with bounded backoff");}
     });
     mosquitto_publish_callback_set(impl_->client, [](mosquitto *, void * context, int mid) {
       auto self = static_cast<MqttConnectionHandler *>(context);
       std::lock_guard<std::mutex> lock(self->impl_->mutex);
-      self->impl_->pending.erase(mid);
+      auto entry = self->impl_->pending.find(mid);
+      if (entry != self->impl_->pending.end()) {
+        self->impl_->pending_bytes -= entry->second;
+        self->impl_->pending.erase(entry);
+      }
     });
     mosquitto_message_callback_set(impl_->client, [](mosquitto *, void * context, const mosquitto_message * msg) {
       auto self = static_cast<MqttConnectionHandler *>(context);
       try {
         if (!msg || !msg->topic || msg->payloadlen < 0 ||
           static_cast<std::size_t>(msg->payloadlen) > kMaxWireBytes) {return;}
+        const bool configuration = self->impl_->device_configuration && self->impl_->config_topic == msg->topic;
+        if (configuration && static_cast<std::size_t>(msg->payloadlen) > kMaxConfigBytes) {return;}
         const std::string wire(msg->payloadlen ? static_cast<const char *>(msg->payload) : "", msg->payloadlen);
-        if (self->impl_->device_configuration && self->impl_->config_topic == msg->topic) {
+        if (configuration) {
           std::lock_guard<std::mutex> lock(self->impl_->mutex);
           const auto is_config = [](const auto & event) {return std::holds_alternative<Impl::Configuration>(event);};
-          if (std::count_if(self->impl_->received.begin(), self->impl_->received.end(), is_config) >= 8) {return;}
-          if (self->impl_->received.size() >= 128) {
+          if (std::count_if(self->impl_->received.begin(), self->impl_->received.end(), is_config) >= 8) {++self->impl_->dropped; return;}
+          while (self->impl_->received.size() >= 128 || self->impl_->received_bytes + wire.size() > kMaxMqttQueuedBytes) {
             auto data = std::find_if(self->impl_->received.begin(), self->impl_->received.end(),
               [&is_config](const auto & event) {return !is_config(event);});
-            if (data != self->impl_->received.end()) {self->impl_->received.erase(data);}
+            if (data == self->impl_->received.end()) {++self->impl_->dropped; return;}
+            self->impl_->received_bytes -= Impl::bytes(*data);
+            self->impl_->received.erase(data); ++self->impl_->dropped;
           }
           self->impl_->received.emplace_back(Impl::Configuration{wire});
+          self->impl_->received_bytes += wire.size();
           return;
         }
         if (self->impl_->input_topic != msg->topic || wire.empty()) {return;}
@@ -174,7 +200,12 @@ bool MqttConnectionHandler::connect()
         if (!self->validate_domain(p)) {return;}
         std::lock_guard<std::mutex> lock(self->impl_->mutex);
         // Reserve room for configuration snapshots; preserve control/data arrival order.
-        if (self->impl_->received.size() < 120) {self->impl_->received.push_back(std::move(p));}
+        Impl::Event event{std::move(p)};
+        const auto bytes = Impl::bytes(event);
+        if (self->impl_->received.size() < 120 && self->impl_->received_bytes + bytes <= kMaxMqttQueuedBytes) {
+          self->impl_->received_bytes += bytes;
+          self->impl_->received.push_back(std::move(event));
+        } else {++self->impl_->dropped;}
         // Overflow drops the newest message. Never let a device grow memory without bound.
       } catch (const std::exception &) {
         // Malformed/unrelated traffic must not escape a C callback or kill the network loop.
@@ -198,6 +229,7 @@ void MqttConnectionHandler::disconnect()
   connected_ = false;
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->received.clear(); impl_->pending.clear();
+  impl_->received_bytes = 0; impl_->pending_bytes = 0; impl_->dropped = 0;
   impl_->subscription_mids.clear(); impl_->request_pending = false;
 }
 bool MqttConnectionHandler::send(const TransportPayload & p)
@@ -206,12 +238,12 @@ bool MqttConnectionHandler::send(const TransportPayload & p)
   try {
     auto wire = impl_->encoding == "json" ? encode_json(p) : encode_protobuf(p);
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->pending.size() >= 128) {return false;}
+    if (impl_->pending.size() >= 120 || impl_->pending_bytes + wire.size() > kMaxMqttQueuedBytes - 8 * kMaxConfigBytes) {return false;}
     int mid = 0;
     const auto result = mosquitto_publish(impl_->client, &mid, impl_->output_topic.c_str(),
       static_cast<int>(wire.size()), wire.data(), 1, false);
     if (result != MOSQ_ERR_SUCCESS) {return false;}
-    impl_->pending.insert(mid);
+    impl_->pending.emplace(mid, wire.size()); impl_->pending_bytes += wire.size();
     return true;  // Queued for QoS 1; not an acknowledgement from the device.
   } catch (const std::exception &) {return false;}
 }
@@ -221,13 +253,13 @@ void MqttConnectionHandler::set_configuration_callback(ConfigurationCallback cal
 }
 bool MqttConnectionHandler::publish_control(const std::string & topic, const std::string & wire)
 {
-  if (!is_connected() || wire.size() > kMaxWireBytes) {return false;}
+  if (!is_connected() || wire.size() > kMaxConfigBytes) {return false;}
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  if (impl_->pending.size() >= 128) {return false;}
+  if (impl_->pending.size() >= 128 || impl_->pending_bytes + wire.size() > kMaxMqttQueuedBytes) {return false;}
   int mid = 0;
   if (mosquitto_publish(impl_->client, &mid, topic.c_str(), static_cast<int>(wire.size()),
     wire.data(), 1, false) != MOSQ_ERR_SUCCESS) {return false;}
-  impl_->pending.insert(mid);
+  impl_->pending.emplace(mid, wire.size()); impl_->pending_bytes += wire.size();
   return true;
 }
 bool MqttConnectionHandler::send_configuration_status(const std::string & json)
@@ -255,12 +287,24 @@ void MqttConnectionHandler::poll()
   // ROS/configuration callbacks execute on the executor, never the MQTT worker.
   decltype(impl_->received) batch;
   bool request = false;
+  std::size_t batch_bytes = 0, dropped = 0;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    batch.swap(impl_->received);
+    // Do not let camera decoding starve other callbacks on the ROS executor.
+    while (!impl_->received.empty() && batch.size() < 16) {
+      const auto bytes = Impl::bytes(impl_->received.front());
+      if (!batch.empty() && batch_bytes + bytes > kMaxWireBytes) {break;}
+      batch_bytes += bytes; impl_->received_bytes -= bytes;
+      batch.push_back(std::move(impl_->received.front())); impl_->received.pop_front();
+    }
     request = impl_->request_pending;
     impl_->request_pending = false;
+    const auto now = std::chrono::steady_clock::now();
+    if (impl_->dropped && now - impl_->last_drop_report >= std::chrono::seconds(5)) {
+      dropped = impl_->dropped; impl_->dropped = 0; impl_->last_drop_report = now;
+    }
   }
+  if (dropped) {RCLCPP_WARN(logger, "Dropped %zu MQTT messages under queue backpressure", dropped);}
   if (request) {request_configuration();}
   for (const auto & event : batch) {
     if (auto config = std::get_if<Impl::Configuration>(&event)) {

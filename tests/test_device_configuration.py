@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Device-advertised interfaces: JSON/protobuf, live replacement, retained bootstrap."""
+import base64
+import math
 import importlib.util
 import json
 import os
@@ -17,6 +19,8 @@ import rclpy
 import yaml
 from ament_index_python.packages import get_package_prefix
 from std_msgs.msg import Bool, Float32, Int32, String
+from sensor_msgs.msg import Imu, MagneticField, NavSatFix, Illuminance, FluidPressure, BatteryState, CompressedImage
+from rclpy.qos import qos_profile_sensor_data
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -215,6 +219,111 @@ class DeviceConfiguration(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertEqual(json.loads(completed.stdout)["active_configuration_id"], "tool-1")
         self.wait(lambda: self.node.count_publishers(self.prefix + "/data/id_phone_2etouch") == 1)
+
+    def test_native_sensor_types_match_rosnect_fields_and_support_both_directions(self):
+        self.start_bridge()
+        self.wait(lambda: "connected" in self.statuses)
+        header = {"stamp": {"sec": 1700000000, "nanosec": 123000000}, "frame_id": "phone_link"}
+        unavailable = [-1, 0, 0, 0, 0, 0, 0, 0, 0]
+        image_bytes = bytes(range(256)) * 300  # Base64 envelope exceeds the old 64 KiB wire limit.
+        cases = [
+            ("phone.accelerometer", "accelerometer", Imu, "sensor_msgs/msg/Imu", {
+                "header": header, "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}, "orientation_covariance": unavailable,
+                "linear_acceleration": {"x": 1.25, "y": -2, "z": 9.81}, "angular_velocity_covariance": unavailable}),
+            ("phone.gyroscope", "gyroscope", Imu, "sensor_msgs/msg/Imu", {
+                "header": header, "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}, "orientation_covariance": unavailable,
+                "angular_velocity": {"x": .1, "y": -.2, "z": .3}, "linear_acceleration_covariance": unavailable}),
+            ("phone.magnetometer", "magnetometer", MagneticField, "sensor_msgs/msg/MagneticField", {
+                "header": header, "magnetic_field": {"x": 45e-6, "y": -12e-6, "z": 0}}),
+            ("phone.location", "location", NavSatFix, "sensor_msgs/msg/NavSatFix", {
+                "header": header, "status": {"status": 0, "service": 1}, "latitude": 52.5, "longitude": 13.4,
+                "position_covariance": [4, 0, 0, 0, 4, 0, 0, 0, 0], "position_covariance_type": 0}),
+            ("phone.light", "light", Illuminance, "sensor_msgs/msg/Illuminance", {"header": header, "illuminance": 123.5, "variance": 0}),
+            ("phone.pressure", "barometer", FluidPressure, "sensor_msgs/msg/FluidPressure", {"header": header, "fluid_pressure": 101325, "variance": 0}),
+            ("phone.battery", "battery", BatteryState, "sensor_msgs/msg/BatteryState", {
+                "header": header, "voltage": 3.9, "temperature": 25.5, "percentage": .75, "present": True, "power_supply_status": 2}),
+            ("phone.camera.frame", "camera/image/compressed", CompressedImage, "sensor_msgs/msg/CompressedImage", {
+                "header": dict(header, frame_id="phone_camera_optical"), "format": "jpeg", "data_base64": base64.b64encode(image_bytes).decode()}),
+            ("phone.touch", "touch", String, "std_msgs/msg/String", {"header": header, "x": .25, "y": .5, "phase": "move"}),
+        ]
+        bindings = [dict(identifier=identifier, ros_topic=topic, direction="DEVICE_TO_ROS", value_type="JSON", ros_message_type=ros_type)
+                    for identifier, topic, cls, ros_type, value in cases]
+        bindings.extend([
+            dict(identifier="robot.imu", ros_topic="imu_input", direction="ROS_TO_DEVICE", value_type="JSON", ros_message_type="sensor_msgs/msg/Imu"),
+            dict(identifier="robot.camera", ros_topic="camera_input", direction="ROS_TO_DEVICE", value_type="JSON", ros_message_type="sensor_msgs/msg/CompressedImage"),
+        ])
+        config = self.snapshot("native-1", bindings)
+        result = self.publish_config(config)
+        self.assertTrue(result["accepted"], result)
+        self.assertEqual(result["bindings"][0]["ros_message_type"], "sensor_msgs/msg/Imu")
+        received = {identifier: [] for identifier, *_ in cases}
+        for identifier, topic, cls, ros_type, value in cases:
+            self.subscriptions.append(self.node.create_subscription(cls, self.prefix + "/" + topic,
+                lambda msg, identifier=identifier: received[identifier].append(msg), 10))
+        imu_input = self.node.create_publisher(Imu, self.prefix + "/imu_input", qos_profile_sensor_data)
+        image_input = self.node.create_publisher(CompressedImage, self.prefix + "/camera_input", qos_profile_sensor_data)
+        self.wait(lambda: imu_input.get_subscription_count() == 1 and image_input.get_subscription_count() == 1)
+        self.pump(.3)
+        for identifier, topic, cls, ros_type, value in cases:
+            self.publish_data(identifier, value)
+        self.wait(lambda: all(received.values()))
+        accel = received["phone.accelerometer"][-1]
+        self.assertEqual(accel.header.frame_id, "phone_link")
+        self.assertEqual((accel.header.stamp.sec, accel.header.stamp.nanosec), (1700000000, 123000000))
+        self.assertEqual(accel.linear_acceleration.z, 9.81)
+        self.assertEqual(accel.angular_velocity_covariance[0], -1)
+        self.assertEqual(accel.orientation_covariance[0], -1)
+        self.assertEqual(received["phone.gyroscope"][-1].angular_velocity.y, -.2)
+        self.assertEqual(received["phone.magnetometer"][-1].magnetic_field.x, 45e-6)
+        self.assertTrue(math.isnan(received["phone.location"][-1].altitude))
+        self.assertEqual(received["phone.light"][-1].illuminance, 123.5)
+        self.assertEqual(received["phone.pressure"][-1].fluid_pressure, 101325)
+        battery = received["phone.battery"][-1]
+        self.assertAlmostEqual(battery.voltage, 3.9, places=5)
+        self.assertEqual(battery.percentage, .75)
+        self.assertTrue(math.isnan(battery.current))
+        self.assertEqual(bytes(received["phone.camera.frame"][-1].data), image_bytes)
+        self.assertEqual(received["phone.camera.frame"][-1].header.frame_id, "phone_camera_optical")
+        self.assertEqual(json.loads(received["phone.touch"][-1].data)["phase"], "move")
+        graph = dict(self.node.get_topic_names_and_types())
+        for identifier, topic, cls, ros_type, value in cases:
+            self.assertEqual(graph[self.prefix + "/" + topic], [ros_type])
+        # Native ROS producers (including best-effort) become JSON device values.
+        imu_input.publish(accel)
+        image_input.publish(received["phone.camera.frame"][-1])
+        def replies():
+            return [json.loads(wire) for topic, wire in self.incoming if topic.endswith("/to_device")]
+        self.wait(lambda: {p["identifier"] for p in replies()} >= {"robot.imu", "robot.camera"})
+        outgoing_imu = next(p for p in replies() if p["identifier"] == "robot.imu")
+        self.assertEqual(outgoing_imu["value_type"], "json")
+        self.assertEqual(outgoing_imu["value"]["linear_acceleration"]["z"], 9.81)
+        outgoing_camera = next(p for p in replies() if p["identifier"] == "robot.camera")
+        self.assertEqual(base64.b64decode(outgoing_camera["value"]["data_base64"]), image_bytes)
+        # Bad measurements are dropped without taking down valid configured interfaces.
+        before = {key: len(value) for key, value in received.items()}
+        for identifier, value in [
+            ("phone.accelerometer", {"linear_acceleration": {"x": "wrong", "y": 0, "z": 0}}),
+            ("phone.gyroscope", {"angular_velocity": {"x": 0, "y": 0, "z": 1}, "angular_velocity_covariance": [0]}),
+            ("phone.location", {"latitude": 91, "longitude": 13}),
+            ("phone.battery", {"voltage": 3.9, "percentage": 75}),
+            ("phone.camera.frame", {"format": "jpeg", "data_base64": "A==="}),
+        ]:
+            self.publish_data(identifier, value)
+        self.pump(.4)
+        self.assertEqual(before, {key: len(value) for key, value in received.items()})
+        self.publish_data("phone.accelerometer", {"linear_acceleration": {"x": 3, "y": 0, "z": 9.81}})
+        self.wait(lambda: received["phone.accelerometer"][-1].linear_acceleration.x == 3)
+        # Configuration limits remain 64 KiB, independently of larger image data.
+        previous = len(self.results())
+        huge = json.dumps(self.snapshot("oversized", [])) + " " * 65536
+        self.peer.publish(self.mqtt_prefix + "/config", huge, qos=1).wait_for_publish()
+        self.pump(.2)
+        self.assertEqual(len(self.results()), previous)
+        for index, (value_type, ros_type) in enumerate([
+                ("FLOAT64", "sensor_msgs/msg/Imu"), ("JSON", "sensor_msgs/msg/PointCloud2")]):
+            invalid = self.snapshot(f"bad-native-{index}", [dict(identifier="x", direction="DEVICE_TO_ROS", value_type=value_type, ros_message_type=ros_type)])
+            self.assertFalse(self.publish_config(invalid, retain=False)["accepted"])
+            self.assertEqual(self.node.count_publishers(self.prefix + "/accelerometer"), 1)
 
     def test_binary_config_and_data_bootstrap_through_manager_without_file(self):
         subprocess.run(["protoc", f"-I{ROOT / 'proto'}", f"--python_out={self.path}",

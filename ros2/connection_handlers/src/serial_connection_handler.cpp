@@ -59,7 +59,7 @@ bool SerialConnectionHandler::send(const TransportPayload & p)
   if (!is_connected() || !validate_domain(p)) {return false;}
   try {
     auto frame = encode_serial(p);
-    if (output_.size() + frame.size() > kMaxWireBytes) {return false;}
+    if (output_.size() + frame.size() > kMaxSerialQueuedBytes) {return false;}
     output_ += frame;
     return true;
   } catch (const std::exception &) {return false;}

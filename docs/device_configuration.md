@@ -2,7 +2,7 @@
 
 The bridge accepts a complete device interface description, creates ROS publishers/subscribers automatically, and acknowledges the result. The device controls which identifiers exist; no phone sensor catalog is hard-coded into the ROS node. A single bridge still owns one configured connection ID/domain. This implements interface discovery within that connection, not automatic creation of manager processes for unknown devices.
 
-The sibling Flutter repository remains unchanged. Its current MQTT implementation only sends data envelopes. Rosnect needs the control exchange below before its UI can update the ROS interfaces automatically. Existing data messages and topics remain compatible.
+This repository keeps the sibling Flutter checkout read-only. Its updated Rosnect implementation now sends interface snapshots and live Android sensor data. The exchange below is also the contract for other clients. Existing data messages remain compatible; native sensor declarations are supported as described in [native sensor conversion](native_sensors.md).
 
 ## Start the host
 
@@ -32,7 +32,7 @@ For connection `phone_1`, domain `7`, default base topic:
 | `ros2embedded/7/phone_1/to_ros` | Device → bridge | Existing data envelope | 1 / false recommended |
 | `ros2embedded/7/phone_1/to_device` | Bridge → device | Existing data envelope | 1 / false |
 
-Configuration messages are **not** wrapped in `BridgePayload`. Route incoming MQTT messages by their topic before attempting to decode data envelopes. The existing Flutter callback currently attempts `BridgePayload.fromJson` on every received message; control messages need a separate parser/stream.
+Configuration messages are **not** wrapped in `BridgePayload`. Route incoming MQTT messages by their topic before attempting to decode data envelopes. Clients need a separate parser/stream for control results rather than passing them to `BridgePayload.fromJson`.
 
 `config_encoding=json` is the host default. To use binary BridgeConfig messages, start with `config_encoding=protobuf`. This is independent of `payload_encoding`, which still selects JSON/protobuf for data. Requests and status responses always use JSON (protobuf JSON representation with snake_case field names). Schemas, including request/status messages, are in `proto/bridge_config.proto`.
 
@@ -76,9 +76,9 @@ Directions are from the bridge/device perspective:
 - App subscribing to an identifier → `ROS_TO_DEVICE`: bridge creates a ROS subscription.
 - Both directions → `BIDIRECTIONAL`: uses distinct ROS output and command topics to avoid feedback.
 
-`value_type` is required and uses the uppercase protobuf enum names, **not** the lower-case data envelope spellings. Match the actual values sent: the current Rosnect sample maps use `JSON`; a numeric Dart double inferred as `float64` requires config `FLOAT64`. Subscriptions must declare the expected value type as well; an identifier alone cannot determine a ROS message type. If the app both publishes and subscribes to the same identifier, merge those entries into one `BIDIRECTIONAL` binding with the same value type; duplicate identifiers or conflicting types are rejected. Existing text subscriptions can default to `STRING`, with a type selector added for other kinds.
+`value_type` is required and uses the uppercase protobuf enum names, **not** the lower-case data envelope spellings. Match the actual values sent: Rosnect's structured sensor values use `JSON`; a numeric Dart double inferred as `float64` requires config `FLOAT64`. Subscriptions must declare the expected value type as well; an identifier alone cannot determine a ROS message type. If the app both publishes and subscribes to the same identifier, merge those entries into one `BIDIRECTIONAL` binding with the same value type; duplicate identifiers or conflicting types are rejected. Existing text subscriptions can default to `STRING`, with a type selector added for other kinds.
 
-`ros_topic` and `ros_message_type` are optional in device mode. The host infers the supported ROS type from `value_type`. If no topic is supplied, it generates a unique legal relative name:
+`ros_topic` and `ros_message_type` are optional in device mode. The host infers the default ROS type from `value_type`. For native sensors, explicitly set `ros_message_type` to a supported `sensor_msgs/msg/...` type and keep `value_type=JSON`; the host then validates/converts the structured fields. If no topic is supplied, it generates a unique legal relative name:
 
 - `phone.accelerometer`, device → ROS: `data/id_phone_2eaccelerometer`
 - `robot.status`, ROS → device: `commands/id_robot_2estatus`
@@ -122,7 +122,7 @@ Repeated identical snapshots are acknowledged without rebuilding. Changed conten
 
 Only one device owner should publish a connection's config topic. Bindings survive broker disconnects in the running host; broker status still reports disconnected. Configuration readiness does not prove the device is online. In-flight data/commands are not cancelled by a configuration ACK; applications needing expiry/acknowledgement must implement it at the payload level. Devices should not change the type on a ROS topic already used by other nodes; publish the new type under a new topic. If the ROS middleware cannot stage an interface replacement, the update is rejected and the previous interfaces remain active.
 
-## Flutter changes required (in the separate repository)
+## Client implementation checklist (including Flutter)
 
 - Maintain enabled sensors and subscriptions in shared interface state accessible to the connection/session, rather than only local widget lists.
 - Add a type to subscription entries; preserve current JSON data envelopes. Merge publish/subscribe entries sharing an identifier into a single bidirectional binding, and validate identifiers before sending.
@@ -131,9 +131,9 @@ Only one device owner should publish a connection's config topic. Bindings survi
 - Expose broker connectivity and interface readiness separately. Do not treat MQTT connection acceptance as a successful ROS configuration.
 - Wait for the matching accepted result before enabling data publishing for the new interfaces; use the normalized ACK for topic display.
 
-No real sensor capture is added by this exchange. Existing samples can validate it first; live sensors remain Flutter work.
+The configuration exchange itself does not capture sensors. The updated Rosnect Android app implements live capture separately and waits for interface readiness before streaming; native message converters are transport-independent bridge functionality.
 
-## Verify without editing Flutter
+## Simulate a device without Flutter
 
 Start the host command above, then from a sourced repository terminal:
 
@@ -143,8 +143,8 @@ Start the host command above, then from a sourced repository terminal:
   --broker 192.168.0.81 --port 1883
 ```
 
-This helper simulates the device's retained configuration message and waits for its ACK. It does not make the existing Flutter app publish configurations automatically. With the demo accepted, Rosnect's accelerometer/gyroscope samples and `robot.status` subscription can use the corresponding interfaces. For TLS use `--tls`, optionally `--ca-file`, `--client-cert`, and `--client-key`. Broker credentials use `--username` and `--password-env NAME`.
+This helper simulates a device's retained configuration message and waits for its ACK. The file above demonstrates JSON-in-String interfaces; use `phone_native_config.json` instead for native sensor declarations. Do not have the helper compete with a running app that owns the same config topic. The updated Rosnect app already publishes its own snapshots. For TLS use `--tls`, optionally `--ca-file`, `--client-cert`, and `--client-key`. Broker credentials use `--username` and `--password-env NAME`.
 
-For a new demo binding set, edit the JSON and change `configuration_id` before rerunning. Retained configs persist in the broker until replaced/deleted; test IDs should be replaced by the app's own snapshot when the Flutter implementation is ready.
+For a new demo binding set, edit the JSON and change `configuration_id` before rerunning. Retained configs persist in the broker until replaced/deleted; replace a test description with the app's own snapshot when resuming app-owned operation.
 
 The local integration tests in `tests/test_device_configuration.py` cover JSON and binary protobuf configs, bidirectional data, defaults, validation, idempotency, removal, restart bootstrap, and manager startup without a file. They never modify Flutter or contact the real broker.

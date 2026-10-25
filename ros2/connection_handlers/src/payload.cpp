@@ -121,7 +121,7 @@ void validate_payload(const TransportPayload & p)
     case ValueType::Json:
       if (auto v = std::get_if<std::string>(&p.value)) {
         // Parsing also rejects invalid UTF-8 when generating the JSON envelope.
-        valid = v->size() <= kMaxValueBytes;
+        valid = v->size() <= (p.type == ValueType::Json ? kMaxJsonValueBytes : kMaxValueBytes);
         if (p.type == ValueType::Json) {
           valid = valid && Json::accept(*v);
           if (valid) {valid = !Json::parse(*v).is_null();}
@@ -130,7 +130,7 @@ void validate_payload(const TransportPayload & p)
       }
       break;
     case ValueType::Bytes:
-      if (auto v = std::get_if<Bytes>(&p.value)) {valid = v->size() <= kMaxValueBytes;}
+      if (auto v = std::get_if<Bytes>(&p.value)) {valid = v->size() <= (p.type == ValueType::Json ? kMaxJsonValueBytes : kMaxValueBytes);}
       break;
   }
   if (!valid) {throw std::invalid_argument("Value does not match type or exceeds limit");}
@@ -144,7 +144,9 @@ std::string encode_json(const TransportPayload & p)
   Json envelope{{"identifier", p.identifier}, {"domain_id", p.domain_id},
     {"value_type", type_name(p.type)}, {"value", value}, {"timestamp_unix_ms", nullptr}};
   if (p.timestamp_unix_ns) {envelope["timestamp_unix_ms"] = p.timestamp_unix_ns / 1000000;}
-  return envelope.dump();
+  auto wire = envelope.dump();
+  if (wire.size() > kMaxWireBytes) {throw std::invalid_argument("Envelope too large");}
+  return wire;
 }
 TransportPayload decode_json(const std::string & wire)
 {

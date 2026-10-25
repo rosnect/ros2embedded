@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "configuration_id": "phone-native-demo-1",
+  "connection_id": "phone_1",
+  "domain_id": 7,
+  "protocol": "PROTOCOL_MQTT",
+  "bindings": [
+    {
+      "identifier": "phone.accelerometer",
+      "ros_topic": "accelerometer",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/Imu"
+    },
+    {
+      "identifier": "phone.gyroscope",
+      "ros_topic": "gyroscope",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/Imu"
+    },
+    {
+      "identifier": "phone.magnetometer",
+      "ros_topic": "magnetometer",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/MagneticField"
+    },
+    {
+      "identifier": "phone.location",
+      "ros_topic": "location",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/NavSatFix"
+    },
+    {
+      "identifier": "phone.light",
+      "ros_topic": "light",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/Illuminance"
+    },
+    {
+      "identifier": "phone.pressure",
+      "ros_topic": "barometer",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/FluidPressure"
+    },
+    {
+      "identifier": "phone.battery",
+      "ros_topic": "battery",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/BatteryState"
+    },
+    {
+      "identifier": "phone.camera.frame",
+      "ros_topic": "camera/image/compressed",
+      "direction": "DEVICE_TO_ROS",
+      "value_type": "JSON",
+      "ros_message_type": "sensor_msgs/msg/CompressedImage"
+    },
+    {
+      "identifier": "robot.status",
+      "ros_topic": "robot_status",
+      "direction": "ROS_TO_DEVICE",
+      "value_type": "STRING"
+    }
+  ]
+}

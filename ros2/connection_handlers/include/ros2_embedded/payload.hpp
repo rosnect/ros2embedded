@@ -26,7 +26,11 @@ struct TransportPayload
 
 constexpr std::size_t kMaxIdentifierBytes = 96;
 constexpr std::size_t kMaxValueBytes = 4096;
-constexpr std::size_t kMaxWireBytes = 65536;
+constexpr std::size_t kMaxJsonValueBytes = 512 * 1024;
+constexpr std::size_t kMaxWireBytes = 1024 * 1024;
+constexpr std::size_t kMaxConfigBytes = 65536;
+constexpr std::size_t kMaxSerialQueuedBytes = 65536;
+constexpr std::size_t kMaxMqttQueuedBytes = 4 * 1024 * 1024;
 constexpr std::size_t kMaxSerialValueBytes = 256;
 
 bool valid_identifier(const std::string & identifier);
