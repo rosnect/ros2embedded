@@ -3,7 +3,7 @@
   <name>bridge_manager</name>
   <version>0.1.0</version>
   <description>Manager node for launching and tracking ROS2 embedded bridge nodes.</description>
-  <maintainer email="maintainer@example.com">ros2embedded maintainers</maintainer>
+  <maintainer email="rosnect.dev@tutamail.com">Abhimanyu Jadli</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>

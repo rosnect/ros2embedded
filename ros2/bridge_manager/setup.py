@@ -8,13 +8,14 @@ setup(
     packages=[package_name],
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
-        (f"share/{package_name}", ["package.xml"]),
+        (f"share/{package_name}", ["package.xml", "LICENSE"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
     tests_require=["pytest"],
-    maintainer="ros2embedded maintainers",
-    maintainer_email="maintainer@example.com",
+    maintainer="Abhimanyu Jadli",
+    url="https://github.com/rosnect/ros2embedded",
+    maintainer_email="rosnect.dev@tutamail.com",
     description="Manager node for launching and tracking ROS2 embedded bridge nodes.",
     license="Apache-2.0",
     entry_points={

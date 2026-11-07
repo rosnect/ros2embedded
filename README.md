@@ -2,7 +2,27 @@
 
 A ROS 2 Humble bridge for embedded devices and other external clients. The architecture remains **manager → one bridge node per connection → transport plugin**. MQTT and serial share typed payload validation and configurable ROS topic bindings.
 
-The Flutter library and Rosnect app live in the separate sibling repository `../flutter_bridge_client`; this repository does not build or modify them.
+Created and maintained by [Abhimanyu Jadli](https://github.com/Abhimanyu07).
+The project lives at [rosnect/ros2embedded](https://github.com/rosnect/ros2embedded),
+under the [Rosnect](https://github.com/rosnect) umbrella for related bridge projects.
+
+The Flutter library and Rosnect app live in the separate repository
+[rosnect/flutter_bridge_client](https://github.com/rosnect/flutter_bridge_client).
+
+## License and contributing
+
+This repository's code, examples, and documentation are licensed under the
+[Apache License 2.0](LICENSE). You may use, modify, and redistribute them,
+including in commercial and closed-source products, subject to the license
+conditions. There is no requirement to publish your modifications or contribute
+them back. No promotional credit or project badge is required; the license's
+notice preservation and redistribution requirements still apply. Third-party
+dependencies retain their own licenses. The separate Flutter/Rosnect repository
+is not covered by this repository's license.
+
+This is a tinkering project maintained as time allows, with no guaranteed support
+or release schedule. See [CONTRIBUTING.md](CONTRIBUTING.md) for reporting issues,
+proposing changes, and running checks.
 
 ## Implemented
 

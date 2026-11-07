@@ -37,6 +37,7 @@ target_link_libraries(connection_handlers protobuf::libprotobuf nlohmann_json::n
 pluginlib_export_plugin_description_file(connection_handlers connection_handler_plugins.xml)
 
 install(FILES ${PROTO_HDRS} DESTINATION include)
+install(FILES LICENSE DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY ../../proto/ DESTINATION share/${PROJECT_NAME}/proto)
 
 install(
